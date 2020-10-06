@@ -10,7 +10,7 @@ BOOTSTRAP_IMAGE_CHEIP = 'codenvy/che-ip:nightly'
 @task
 def waitfordbs(ctx):
     print("**************************databases*******************************")
-    ctx.run("/usr/bin/wait-for-databases {0}".format('db'), pty=True)
+    ctx.run("/usr/bin/wait-for-databases {0}".format(__get_db_host()), pty=True)
 
 
 @task
@@ -128,10 +128,11 @@ def _update_db_connstring():
     user = os.getenv('GEONODE_DATABASE', 'geonode')
     pwd = os.getenv('GEONODE_DATABASE_PASSWORD', 'geonode')
     dbname = os.getenv('GEONODE_DATABASE', 'geonode')
-    connstr = 'postgres://{0}:{1}@db:5432/{2}'.format(
+    connstr = 'postgres://{0}:{1}@{3}:5432/{2}'.format(
         user,
         pwd,
-        dbname
+        dbname,
+        __get_db_host()
     )
     return connstr
 
@@ -140,10 +141,11 @@ def _update_geodb_connstring():
     geouser = os.getenv('GEONODE_GEODATABASE', 'geonode_data')
     geopwd = os.getenv('GEONODE_GEODATABASE_PASSWORD', 'geonode_data')
     geodbname = os.getenv('GEONODE_GEODATABASE', 'geonode_data')
-    geoconnstr = 'postgis://{0}:{1}@db:5432/{2}'.format(
+    geoconnstr = 'postgis://{0}:{1}@{3}:5432/{2}'.format(
         geouser,
         geopwd,
-        geodbname
+        geodbname,
+        __get_db_host()
     )
     return geoconnstr
 
@@ -198,3 +200,7 @@ Y9HKeIQPcy5Cp08KQNpRHQbjpLItDHv12GvkSeXp6OxaUETv3",
     ]
     with open('/tmp/default_oauth_apps_docker.json', 'w') as fixturefile:
         json.dump(default_fixture, fixturefile)
+
+
+def __get_db_host():
+    return os.getenv('DATABASE_HOST', 'db')
