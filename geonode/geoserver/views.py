@@ -90,9 +90,11 @@ def updatelayers(request):
     workspace = params.get('workspace', None)
     store = params.get('store', None)
     filter = params.get('filter', None)
-    geoserver_update_layers.delay(
+    result = geoserver_update_layers.delay(
         ignore_errors=False, owner=owner, workspace=workspace,
         store=store, filter=filter)
+    # Attempt to run task synchronously
+    result.get()
 
     return HttpResponseRedirect(reverse('layer_browse'))
 
@@ -447,9 +449,16 @@ def geoserver_proxy(request,
     #         status=401)
 
     def strip_prefix(path, prefix):
-        assert prefix in path
-        prefix_idx = path.index(prefix)
-        _prefix = path[:prefix_idx] + prefix
+        if prefix not in path:
+            _s_prefix = prefix.split('/', 3)
+            _s_path = path.split('/', 3)
+            assert _s_prefix[1] == _s_path[1]
+            _prefix = f'/{_s_path[1]}/{_s_path[2]}'
+        else:
+            _prefix = prefix
+        assert _prefix in path
+        prefix_idx = path.index(_prefix)
+        _prefix = path[:prefix_idx] + _prefix
         full_prefix = "%s/%s/%s" % (
             _prefix, layername, downstream_path) if layername else _prefix
         return path[len(full_prefix):]
@@ -527,7 +536,7 @@ def geoserver_proxy(request,
 
     kwargs = {'affected_layers': affected_layers}
     raw_url = unquote(raw_url)
-    timeout = getattr(ogc_server_settings, 'TIMEOUT') or 30
+    timeout = getattr(ogc_server_settings, 'TIMEOUT') or 60
     allowed_hosts = [urlsplit(ogc_server_settings.public_url).hostname, ]
     return proxy(request, url=raw_url, response_callback=_response_callback,
                  timeout=timeout, allowed_hosts=allowed_hosts, **kwargs)
@@ -540,9 +549,9 @@ def _response_callback(**kwargs):
     content_type_list = ['application/xml', 'text/xml', 'text/plain', 'application/json', 'text/json']
 
     if content:
-        if isinstance(content, bytes):
-            content = content.decode('UTF-8')
         if not content_type:
+            if isinstance(content, bytes):
+                content = content.decode('UTF-8')
             if (re.match(r'^<.+>$', content)):
                 content_type = 'application/xml'
             elif (re.match(r'^({|[).+(}|])$', content)):
@@ -552,11 +561,17 @@ def _response_callback(**kwargs):
 
         # Replace Proxy URL
         try:
+            if isinstance(content, bytes):
+                _content = content.decode('UTF-8')
+            else:
+                _content = content
             if re.findall(r"(?=(\b" + '|'.join(content_type_list) + r"\b))", content_type):
                 _gn_proxy_url = urljoin(settings.SITEURL, '/gs/')
-                content = content\
+                content = _content\
                     .replace(ogc_server_settings.LOCATION, _gn_proxy_url)\
                     .replace(ogc_server_settings.PUBLIC_LOCATION, _gn_proxy_url)
+                for _ows_endpoint in list(dict.fromkeys(re.findall(rf'{_gn_proxy_url}w\ws', content, re.IGNORECASE))):
+                    content = content.replace(_ows_endpoint, f'{_gn_proxy_url}ows')
         except Exception as e:
             logger.exception(e)
 

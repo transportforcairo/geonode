@@ -21,6 +21,7 @@
 import io
 import os
 import re
+import six
 import gzip
 import json
 import shutil
@@ -192,12 +193,35 @@ def proxy(request, url=None, response_callback=None,
     status = response.status_code
     content_type = response.headers.get('Content-Type')
 
+    if status >= 400:
+        return HttpResponse(
+            content=content,
+            reason=content,
+            status=status,
+            content_type=content_type)
+
     # decompress GZipped responses if not enabled
     # if content and response and response.getheader('Content-Encoding') == 'gzip':
     if content and content_type and content_type == 'gzip':
         buf = io.BytesIO(content)
         f = gzip.GzipFile(fileobj=buf)
         content = f.read()
+
+    PLAIN_CONTENT_TYPES = [
+        'text',
+        'plain',
+        'html',
+        'json',
+        'xml',
+        'gml'
+    ]
+    for _ct in PLAIN_CONTENT_TYPES:
+        if content_type and _ct in content_type and not isinstance(content, six.string_types):
+            try:
+                content = content.decode()
+                break
+            except Exception:
+                pass
 
     if response and response_callback:
         kwargs = {} if not kwargs else kwargs
@@ -220,7 +244,9 @@ def proxy(request, url=None, response_callback=None,
             return _response
         else:
             def _get_message(text):
-                _s = text.decode("utf-8", "replace")
+                _s = text
+                if isinstance(text, bytes):
+                    _s = text.decode("utf-8", "replace")
                 try:
                     found = re.search('<b>Message</b>(.+?)</p>', _s).group(1).strip()
                 except Exception:
@@ -262,9 +288,9 @@ def download(request, resourceid, sender=Layer):
                     item for idx, item in enumerate(LayerFile.objects.filter(upload_session=upload_session))]
                 if layer_files:
                     # Copy all Layer related files into a temporary folder
-                    for l in layer_files:
-                        if storage.exists(str(l.file)):
-                            geonode_layer_path = storage.path(str(l.file))
+                    for lyr in layer_files:
+                        if storage.exists(str(lyr.file)):
+                            geonode_layer_path = storage.path(str(lyr.file))
                             base_filename, original_ext = os.path.splitext(geonode_layer_path)
                             shutil.copy2(geonode_layer_path, target_folder)
                         else:

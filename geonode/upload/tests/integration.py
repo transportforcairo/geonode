@@ -108,15 +108,17 @@ def get_wms(version='1.1.1', type_name=None, username=None, password=None):
     else:
         url = GEOSERVER_URL + \
             'wms?request=getcapabilities'
+    ogc_server_settings = settings.OGC_SERVER['default']
     if username and password:
         return WebMapService(
             url,
             version=version,
             username=username,
-            password=password
+            password=password,
+            timeout=ogc_server_settings.get('TIMEOUT', 60)
         )
     else:
-        return WebMapService(url)
+        return WebMapService(url, timeout=ogc_server_settings.get('TIMEOUT', 60))
 
 
 class UploaderBase(GeoNodeLiveTestSupport):
@@ -207,7 +209,7 @@ class UploaderBase(GeoNodeLiveTestSupport):
         the uploader is done"""
         # using gsconfig to test the geoserver rest api.
         layer = self.catalog.get_layer(layer_name)
-        self.assertIsNotNone(layer is not None)
+        self.assertIsNotNone(layer)
 
     def check_and_pass_through_timestep(self, redirect_to):
         time_step = upload_step('time')
@@ -335,6 +337,7 @@ class UploaderBase(GeoNodeLiveTestSupport):
             time.sleep(.5)
             try:
                 self.check_layer_geoserver_caps(type_name)
+                self.check_layer_geoserver_rest(layer_name)
                 caps_found = True
             except Exception:
                 pass
@@ -342,7 +345,6 @@ class UploaderBase(GeoNodeLiveTestSupport):
             logger.warning(
                 "Could not recognize Layer %s on GeoServer WMS Capa" %
                 original_name)
-        self.check_layer_geoserver_rest(layer_name)
         self.check_upload_model(layer_name)
 
     def check_invalid_projection(self, layer_name, resp, data):
@@ -530,7 +532,7 @@ class TestUpload(UploaderBase):
         """Test uploading a zipped shapefile"""
         fd, abspath = self.temp_file('.zip')
         fp = os.fdopen(fd, 'wb')
-        zf = ZipFile(fp, 'w')
+        zf = ZipFile(fp, 'w', allowZip64=True)
         fpath = os.path.join(
             GOOD_DATA,
             'vector',
@@ -650,7 +652,7 @@ class TestUploadDBDataStore(UploaderBase):
 
     def test_time(self):
         """Verify that uploading time based shapefile works properly"""
-        cascading_delete(self.catalog, 'boxes_with_date')
+        cascading_delete(layer_name='boxes_with_date', catalog=self.catalog)
 
         timedir = os.path.join(GOOD_DATA, 'time')
         layer_name = 'boxes_with_date'
@@ -701,7 +703,7 @@ class TestUploadDBDataStore(UploaderBase):
     def test_configure_time(self):
         layer_name = 'boxes_with_end_date'
         # make sure it's not there (and configured)
-        cascading_delete(gs_catalog, layer_name)
+        cascading_delete(layer_name=layer_name, catalog=gs_catalog)
 
         def get_wms_timepositions():
             alternate_name = 'geonode:%s' % layer_name

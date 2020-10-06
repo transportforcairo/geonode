@@ -57,6 +57,7 @@ from geonode.base.auth import get_or_create_token
 from geonode import GeoNodeException, geoserver, qgis_server
 from geonode.people.utils import get_valid_user
 from geonode.layers.models import UploadSession, LayerFile
+from geonode.base.thumb_utils import thumb_exists
 from geonode.base.models import Link, SpatialRepresentationType,  \
     TopicCategory, Region, License, ResourceBase
 from geonode.layers.models import shp_exts, csv_exts, vec_exts, cov_exts, Layer
@@ -155,9 +156,9 @@ def get_files(filename):
     from geonode.utils import unzip_file
     if zipfile.is_zipfile(filename):
         tempdir = tempfile.mkdtemp()
-        filename = unzip_file(filename,
-                              '.shp', tempdir=tempdir)
-        if not filename:
+        _filename = unzip_file(filename,
+                               '.shp', tempdir=tempdir)
+        if not _filename:
             # We need to iterate files as filename could be the zipfile
             import ntpath
             from geonode.upload.utils import _SUPPORTED_EXT
@@ -168,6 +169,8 @@ def get_files(filename):
                         item_ext.lower() in _SUPPORTED_EXT):
                     filename = os.path.join(tempdir, item)
                     break
+        else:
+            filename = _filename
 
     # Make sure the file exists.
     if not os.path.exists(filename):
@@ -211,13 +214,17 @@ def get_files(filename):
 
     # Only for GeoServer
     if check_ogc_backend(geoserver.BACKEND_PACKAGE):
-        matches = glob.glob(glob_name + ".[sS][lL][dD]")
+        matches = glob.glob(os.path.dirname(glob_name) + "/*.[sS][lL][dD]")
         if len(matches) == 1:
             files['sld'] = matches[0]
         elif len(matches) > 1:
-            msg = ('Multiple style files (sld) for %s exist; they need to be '
-                   'distinct by spelling and not just case.') % filename
-            raise GeoNodeException(msg)
+            matches = glob.glob(glob_name + ".[sS][lL][dD]")
+            if len(matches) == 1:
+                files['sld'] = matches[0]
+            elif len(matches) > 1:
+                msg = ('Multiple style files (sld) for %s exist; they need to be '
+                       'distinct by spelling and not just case.') % filename
+                raise GeoNodeException(msg)
 
     matches = glob.glob(glob_name + ".[xX][mM][lL]")
 
@@ -271,7 +278,7 @@ def layer_type(filename):
     base_name, extension = os.path.splitext(filename)
 
     if extension.lower() == '.zip':
-        zf = ZipFile(filename)
+        zf = ZipFile(filename, allowZip64=True)
         # ZipFile doesn't support with statement in 2.6, so don't do it
         try:
             for n in zf.namelist():
@@ -949,15 +956,8 @@ def create_thumbnail(instance, thumbnail_remote_url, thumbnail_create_url=None,
         thumbnail_name = 'layer-%s-thumb.png' % instance.uuid
     elif isinstance(instance, Map):
         thumbnail_name = 'map-%s-thumb.png' % instance.uuid
-    _thumb_exists = False
-    try:
-        _thumbnail_dir = os.path.join(settings.MEDIA_ROOT, 'thumbs')
-        _thumbnail_path = os.path.join(_thumbnail_dir, thumbnail_name)
-        _thumb_exists = storage.exists(_thumbnail_path)
-    except Exception:
-        _thumbnail_dir = os.path.join(settings.STATIC_ROOT, 'thumbs')
-        _thumbnail_path = os.path.join(_thumbnail_dir, thumbnail_name)
-        _thumb_exists = storage.exists(_thumbnail_path)
+
+    _thumb_exists = thumb_exists(thumbnail_name)
     if overwrite or not _thumb_exists:
         BBOX_DIFFERENCE_THRESHOLD = 1e-5
 
@@ -1227,15 +1227,20 @@ def create_gs_thumbnail_geonode(instance, overwrite=False, check_bbox=False):
 
 def delete_orphaned_layers():
     """Delete orphaned layer files."""
-    layer_path = os.path.join(settings.MEDIA_ROOT, 'layers')
-    for filename in os.listdir(layer_path):
-        fn = os.path.join(layer_path, filename)
+    deleted = []
+    _, files = storage.listdir("layers")
+
+    for filename in files:
         if LayerFile.objects.filter(file__icontains=filename).count() == 0:
-            logger.debug('Removing orphan layer file %s' % fn)
+            logger.debug("Deleting orphaned layer file " + filename)
             try:
-                os.remove(fn)
-            except OSError:
-                logger.warn('Could not delete file %s' % fn)
+                storage.delete(os.path.join("layers", filename))
+                deleted.append(filename)
+            except NotImplementedError as e:
+                logger.error(
+                    "Failed to delete orphaned layer file '{}': {}".format(filename, e))
+
+    return deleted
 
 
 def set_layers_permissions(permissions_name, resources_names=None,

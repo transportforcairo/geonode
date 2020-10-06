@@ -1,4 +1,4 @@
-FROM geonode-base:latest
+FROM transportforcairo/geonode-base:latest
 LABEL GeoNode development team
 
 COPY . /usr/src/app/
@@ -10,7 +10,4 @@ RUN python manage.py migrate --settings=geonode.settings
 
 EXPOSE 8000
 
-# CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
-# CMD ["paver", "start_django", "-b", "0.0.0.0:8000"]
-# CMD ["uwsgi", "--ini", "uwsgi.ini"]
-ENTRYPOINT ["/usr/src/app/entrypoint.sh"]
+ENTRYPOINT service cron restart && /usr/src/app/entrypoint.sh

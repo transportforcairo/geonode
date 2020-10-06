@@ -124,7 +124,7 @@ def unzip_file(upload_file, extension='.shp', tempdir=None):
     if not os.path.isdir(tempdir):
         os.makedirs(tempdir)
 
-    the_zip = ZipFile(upload_file)
+    the_zip = ZipFile(upload_file, allowZip64=True)
     the_zip.extractall(tempdir)
     for item in the_zip.namelist():
         if item.endswith(extension):
@@ -570,7 +570,7 @@ class GXPMapBase(object):
                     results.append(x)
             return results
 
-        configs = [l.source_config(access_token) for l in layers]
+        configs = [lyr.source_config(access_token) for lyr in layers]
 
         i = 0
         for source in uniqify(configs):
@@ -585,9 +585,9 @@ class GXPMapBase(object):
                     return k
             return None
 
-        def layer_config(l, user=None):
-            cfg = l.layer_config(user=user)
-            src_cfg = l.source_config(access_token)
+        def layer_config(lyr, user=None):
+            cfg = lyr.layer_config(user=user)
+            src_cfg = lyr.source_config(access_token)
             source = source_lookup(src_cfg)
             if source:
                 cfg["source"] = source
@@ -649,7 +649,7 @@ class GXPMapBase(object):
             'defaultSourceType': "gxp_wmscsource",
             'sources': sources,
             'map': {
-                'layers': [layer_config(l, user=user) for l in layers],
+                'layers': [layer_config(lyr, user=user) for lyr in layers],
                 'center': [self.center_x, self.center_y],
                 'projection': self.projection,
                 'zoom': self.zoom
@@ -1118,6 +1118,32 @@ def check_shp_columnnames(layer):
         return fixup_shp_columnnames(inShapefile, layer.charset)
 
 
+def clone_shp_field_defn(srcFieldDefn, name):
+    """
+    Clone an existing ogr.FieldDefn with a new name
+    """
+    dstFieldDefn = ogr.FieldDefn(name, srcFieldDefn.GetType())
+    dstFieldDefn.SetWidth(srcFieldDefn.GetWidth())
+    dstFieldDefn.SetPrecision(srcFieldDefn.GetPrecision())
+
+    return dstFieldDefn
+
+
+def rename_shp_columnnames(inLayer, fieldnames):
+    """
+    Rename columns in a layer to those specified in the given mapping
+    """
+    inLayerDefn = inLayer.GetLayerDefn()
+
+    for i in range(inLayerDefn.GetFieldCount()):
+        srcFieldDefn = inLayerDefn.GetFieldDefn(i)
+        dstFieldName = fieldnames.get(srcFieldDefn.GetName())
+
+        if dstFieldName is not None:
+            dstFieldDefn = clone_shp_field_defn(srcFieldDefn, dstFieldName)
+            inLayer.AlterFieldDefn(i, dstFieldDefn, ogr.ALTER_NAME_FLAG)
+
+
 def fixup_shp_columnnames(inShapefile, charset, tempdir=None):
     """ Try to fix column names and warn the user
     """
@@ -1125,6 +1151,7 @@ def fixup_shp_columnnames(inShapefile, charset, tempdir=None):
 
     if not tempdir:
         tempdir = tempfile.mkdtemp()
+
     if is_zipfile(inShapefile):
         inShapefile = unzip_file(inShapefile, '.shp', tempdir=tempdir)
 
@@ -1135,8 +1162,9 @@ def fixup_shp_columnnames(inShapefile, charset, tempdir=None):
         tb = traceback.format_exc()
         logger.debug(tb)
         inDataSource = None
+
     if inDataSource is None:
-        logger.debug('Could not open %s' % (inShapefile))
+        logger.debug("Could not open {}".format(inShapefile))
         return False, None, None
     else:
         inLayer = inDataSource.GetLayer()
@@ -1153,7 +1181,7 @@ def fixup_shp_columnnames(inShapefile, charset, tempdir=None):
     list_col_original = []
     list_col = {}
 
-    for i in range(0, inLayerDefn.GetFieldCount()):
+    for i in range(inLayerDefn.GetFieldCount()):
         try:
             field_name = inLayerDefn.GetFieldDefn(i).GetName()
             if a.match(field_name):
@@ -1162,21 +1190,12 @@ def fixup_shp_columnnames(inShapefile, charset, tempdir=None):
             logger.exception(e)
             return True, None, None
 
-    for i in range(0, inLayerDefn.GetFieldCount()):
+    for i in range(inLayerDefn.GetFieldCount()):
         try:
             field_name = inLayerDefn.GetFieldDefn(i).GetName()
             if not a.match(field_name):
                 # once the field_name contains Chinese, to use slugify_zh
-                has_ch = False
-                for ch in field_name:
-                    try:
-                        if '\u4e00' <= ch.decode("utf-8", "surrogateescape") <= '\u9fff':
-                            has_ch = True
-                            break
-                    except Exception:
-                        has_ch = True
-                        break
-                if has_ch:
+                if any('\u4e00' <= ch <= '\u9fff' for ch in field_name):
                     new_field_name = slugify_zh(field_name, separator='_')
                 else:
                     new_field_name = slugify(field_name)
@@ -1189,7 +1208,8 @@ def fixup_shp_columnnames(inShapefile, charset, tempdir=None):
                     if new_field_name.endswith('_' + str(j)):
                         j += 1
                         new_field_name = new_field_name[:-2] + '_' + str(j)
-                list_col.update({field_name: new_field_name})
+                if field_name != new_field_name:
+                    list_col[field_name] = new_field_name
         except Exception as e:
             logger.exception(e)
             return True, None, None
@@ -1198,9 +1218,9 @@ def fixup_shp_columnnames(inShapefile, charset, tempdir=None):
         return True, None, None
     else:
         try:
-            for key in list_col.keys():
-                qry = "ALTER TABLE \"{}\" RENAME COLUMN \"{}\" TO \"{}\"".format(inLayer.GetName(), key, list_col[key])
-                inDataSource.ExecuteSQL(qry)
+            rename_shp_columnnames(inLayer, list_col)
+            inDataSource.SyncToDisk()
+            inDataSource.Destroy()
         except Exception as e:
             logger.exception(e)
             raise GeoNodeException(
@@ -1388,7 +1408,7 @@ class HttpClient(object):
         self.password = 'admin'
         if check_ogc_backend(geoserver.BACKEND_PACKAGE):
             ogc_server_settings = settings.OGC_SERVER['default']
-            self.timeout = ogc_server_settings['TIMEOUT'] if 'TIMEOUT' in ogc_server_settings else 5
+            self.timeout = ogc_server_settings['TIMEOUT'] if 'TIMEOUT' in ogc_server_settings else 60
             self.retries = ogc_server_settings['MAX_RETRIES'] if 'MAX_RETRIES' in ogc_server_settings else 5
             self.backoff_factor = ogc_server_settings['BACKOFF_FACTOR'] if \
             'BACKOFF_FACTOR' in ogc_server_settings else 0.3
@@ -1438,7 +1458,7 @@ class HttpClient(object):
         action = getattr(session, method.lower(), None)
         if action:
             response = action(
-                url=unquote(url),
+                url=url,
                 data=data,
                 headers=headers,
                 timeout=timeout or self.timeout,
@@ -1516,6 +1536,8 @@ def copy_tree(src, dst, symlinks=False, ignore=None):
                     pass
             else:
                 try:
+                    if ignore and s in ignore(dst, [s]):
+                        return
                     shutil.copy2(s, d)
                 except Exception:
                     pass

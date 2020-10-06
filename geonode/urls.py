@@ -97,11 +97,6 @@ urlpatterns += [
     # Catalogue views
     url(r'^catalogue/', include('geonode.catalogue.urls')),
 
-    # data.json
-    url(r'^data.json$',
-        geonode.catalogue.views.data_json,
-        name='data_json'),
-
     # ident
     url(r'^ident.json$',
         views.ident_json,
@@ -167,9 +162,13 @@ urlpatterns += [
     # Curated Thumbnail
     url(r'^base/(?P<res_id>[^/]+)/thumbnail_upload$', thumbnail_upload,
         name='thumbnail_upload'),
+
+    # tinymce WYSIWYG HTML Editor
+    url(r'^tinymce/', include('tinymce.urls')),
 ]
 
 urlpatterns += i18n_patterns(
+    url(r'^grappelli/', include('grappelli.urls')),
     url(r'^admin/', admin.site.urls, name="admin"),
 )
 
@@ -213,7 +212,7 @@ if check_ogc_backend(geoserver.BACKEND_PACKAGE):
             get_capabilities, name='capabilities_category'),
         url(r'^gs/', include('geonode.geoserver.urls')),
     ]
-if check_ogc_backend(qgis_server.BACKEND_PACKAGE):
+elif check_ogc_backend(qgis_server.BACKEND_PACKAGE):
     # QGIS Server's urls
     urlpatterns += [  # '',
         url(r'^qgis-server/',
