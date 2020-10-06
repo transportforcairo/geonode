@@ -10,4 +10,4 @@ RUN python manage.py migrate --settings=geonode.settings
 
 EXPOSE 8000
 
-ENTRYPOINT service cron restart && /usr/src/app/entrypoint.sh
+ENTRYPOINT /usr/src/app/entrypoint.sh
