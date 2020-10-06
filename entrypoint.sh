@@ -74,12 +74,7 @@ else
         /usr/local/bin/invoke statics
         echo "static data refreshed"
 
-        cmd=$UWSGI_CMD
-        echo "Executing UWSGI server $cmd for Production"
-
+        uwsgi --ini uwsgi.ini
     fi
 
 fi
-
-echo "command to be executed is $cmd"
-exec $cmd
